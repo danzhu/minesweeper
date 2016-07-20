@@ -1,0 +1,442 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title>Minesweeper</title>
+    <style>
+        body {
+            font-family: Arial;
+        }
+
+        #menu {
+            padding: 10px;
+            text-align: center;
+        }
+
+            #menu h1 {
+                color: rgb(108, 158, 236);
+                text-shadow: rgba(0,0,0,0.4) 1px 1px 2px;
+            }
+
+            #menu > div {
+                margin: 10px;
+            }
+
+        #boardUI {
+            margin: auto;
+            background-color: black;
+            color: white;
+            box-shadow: rgba(0,0,0,0.4) 0 0 20px;
+        }
+
+            #boardUI td {
+                font-weight: 900;
+                font-size: large;
+                height: 30px;
+                width: 30px;
+                text-align: center;
+                vertical-align: central;
+                border: 1px solid white;
+                -moz-transition: all 0.5s;
+                -o-transition: all 0.5s;
+                -webkit-transition: all 0.5s;
+                transition: all 0.5s;
+                text-shadow: rgba(0,0,0,0.2) 1px 2px 1px;
+            }
+
+                #boardUI td:hover {
+                    border: 1px solid black;
+                }
+
+        [data-state=covered] {
+            background-color: rgb(108, 158, 236);
+        }
+
+        [data-state=uncovered] {
+            background-color: white;
+        }
+
+        [data-number="1"] {
+            color: rgb(94, 155, 236);
+        }
+
+        [data-number="2"] {
+            color: rgb(78, 210, 97);
+        }
+
+        [data-number="3"] {
+            color: rgb(228, 87, 87);
+        }
+
+        [data-number="4"] {
+            color: rgb(67, 78, 191);
+        }
+
+        [data-number="5"] {
+            color: rgb(191, 47, 47);
+        }
+
+        [data-number="6"] {
+            color: rgb(76, 153, 45);
+        }
+
+
+        [data-number="7"] {
+            color: rgb(132, 48, 195);
+        }
+
+        [data-number="8"] {
+            color: rgb(252, 169, 59);
+        }
+
+        [data-state=mine] {
+            background-color: rgb(85, 85, 85);
+        }
+
+        [data-state=empty] {
+            background-color: white;
+        }
+
+        [data-state=flag] {
+            background-color: rgb(227, 213, 85);
+        }
+
+        [data-state=right] {
+            background-color: rgb(94, 219, 58);
+        }
+
+        [data-state=wrong] {
+            background-color: rgb(239, 121, 98);
+        }
+    </style>
+    <script>
+        var board, state, boardMines, uncoversToWin, gameState, trippedMines, uncoveredTiles, canLose, useHint, hintsUsed, timeCollapsed, timerHdlr, rightFlags, wrongFlags;
+
+        var states = {
+            covered: 0,
+            uncovered: 1,
+            flag: 2,
+            right: 3,
+            wrong: 4
+        };
+
+        function initializeBoard(height, width, mines) {
+            board = new Array();
+            state = new Array();
+            uncoveredTiles = 0;
+            uncoversToWin = height * width - mines;
+            boardMines = mines;
+            trippedMines = 0;
+            hintsUsed = 0;
+            rightFlags = 0;
+            wrongFlags = 0;
+            changeGameState("Initialized");
+
+            for (var x = 0; x < width; x++) {
+                board.push(new Array());
+                state.push(new Array());
+                for (var y = 0; y < height; y++) {
+                    board[x].push(0);
+                    state[x].push(states.covered);
+                }
+            }
+
+            var uiContent = "";
+            for (var x = 0; x < width; x++) {
+                uiContent += "<tr>";
+                for (var y = 0; y < height; y++) {
+                    uiContent += '<td id="tile-' + x + '-' + y + '" onclick="leftClick(' + x + ',' + y + ');" oncontextmenu="rightClick(' + x + ',' + y + ');" data-state="covered"></td>';
+                }
+                uiContent += "</tr>";
+            }
+
+            boardUI.innerHTML = uiContent;
+        }
+
+        function generateBoard(firstClickX, firstClickY) {
+            changeGameState("Started");
+
+            for (var i = 0; i < boardMines; i++) {
+                var x = Math.floor(Math.random() * board.length);
+                var y = Math.floor(Math.random() * board[0].length);
+                if (board[x][y] == 0 && (Math.abs(x - firstClickX) > 1 || Math.abs(y - firstClickY) > 1))
+                    board[x][y] = -1;
+                else
+                    i--;
+            }
+
+            foreachTile(function (x, y) {
+                if (board[x][y] != -1)
+                    processAdjcent(x, y, function (p, q) {
+                        board[x][y] += board[p][q] == -1 ? 1 : 0;
+                    });
+            });
+        }
+
+        function leftClick(x, y) {
+            switch (gameState) {
+                case "Initialized":
+                    generateBoard(x, y);
+                case "Started":
+                    if (useHint) {
+                        hint(x, y);
+                        hintsUsed++;
+                        useHint = false;
+                        return;
+                    }
+                    uncover(x, y);
+                    checkGameState();
+                    redraw();
+                    break;
+            }
+        }
+
+        function rightClick(x, y) {
+            if (gameState != "Started")
+                return;
+            flag(x, y);
+            redraw();
+        }
+
+        function hint(x, y) {
+            if (state[x][y] != states.uncovered)
+                if (board[x][y] != -1)
+                    uncover(x, y);
+                else
+                    state[x][y] = states.flag;
+            else
+                processAdjcent(x, y, function (p, q) {
+                    if (board[p][q] == -1 && state[p][q] != states.uncovered)
+                        state[p][q] = states.flag;
+                });
+            checkGameState();
+            redraw();
+        }
+
+        function redraw() {
+            foreachTile(function (x, y) {
+                var tile = document.getElementById("tile-" + x + "-" + y);
+                switch (state[x][y]) {
+                    case states.covered:
+                        tile.innerHTML = "";
+                        tile.setAttribute("data-state", "covered");
+                        break;
+                    case states.uncovered:
+                        switch (board[x][y]) {
+                            case -1:
+                                tile.innerHTML = "&bull;";
+                                tile.setAttribute("data-state", "mine");
+                                break;
+                            case 0:
+                                tile.innerHTML = "";
+                                tile.setAttribute("data-state", "empty");
+                                break;
+                            default:
+                                tile.innerHTML = board[x][y];
+                                tile.setAttribute("data-state", "uncovered");
+                                tile.setAttribute("data-number", board[x][y])
+                                break;
+                        }
+                        break;
+                    case states.flag:
+                        tile.innerHTML = "&ang;|";
+                        tile.setAttribute("data-state", "flag");
+                        break;
+                    case states.right:
+                        tile.innerHTML = "&ang;|";
+                        tile.setAttribute("data-state", "right");
+                        break;
+                    case states.wrong:
+                        tile.innerHTML = "&times;";
+                        tile.setAttribute("data-state", "wrong");
+                        break;
+                }
+            });
+        }
+
+        function checkGameState() {
+            if (uncoveredTiles == uncoversToWin)
+                changeGameState("Won");
+        }
+
+        function foreachTile(operation) {
+            for (var x = 0; x < board.length; x++)
+                for (var y = 0; y < board[0].length; y++)
+                    operation(x, y);
+        }
+
+        function changeGameState(newGameState) {
+            switch (newGameState) {
+                case "Initialized":
+                    gameState = newGameState;
+
+                    message.innerHTML = "";
+                    time.innerHTML = "Time: 0s.";
+
+                    clearInterval(timerHdlr);
+                    break;
+                case "Started":
+                    if (gameState != "Initialized")
+                        return;
+                    gameState = newGameState;
+
+                    timeCollapsed = 0;
+                    timerHdlr = setInterval(function () { timeCollapsed++; time.innerHTML = "Time: " + timeCollapsed + "s."; }, 1000);
+                    break;
+                case "Won":
+                    if (gameState != "Started")
+                        return;
+                    gameState = newGameState;
+
+                    if (trippedMines == 0 && hintsUsed == 0)
+                        message.innerHTML = "Wonderful!";
+                    else
+                        message.innerHTML = "You tripped " + trippedMines + " mine(s) and used " + hintsUsed + " hint(s).";
+                    foreachTile(function (x, y) {
+                        if (state[x][y] == states.covered)
+                            state[x][y] = states.flag;
+                    });
+                    revealBoard();
+
+                    clearInterval(timerHdlr);
+                    break;
+                case "Lost":
+                    if (gameState != "Started")
+                        return;
+                    gameState = newGameState;
+
+                    message.innerHTML = "BOOM!";
+
+                    clearInterval(timerHdlr);
+                    break;
+                case "Ended":
+                    if (gameState == "Started")
+                        gameState = newGameState;
+                    else if (gameState != "Lost")
+                        return;
+
+                    revealBoard();
+                    redraw();
+                    message.innerHTML = "You placed " + rightFlags + " right flag(s) and " + wrongFlags + " wrong flag(s).";
+
+                    clearInterval(timerHdlr);
+                    break;
+            }
+        }
+
+        function uncover(x, y) {
+            switch (state[x][y]) {
+                case states.covered:
+                    state[x][y] = states.uncovered;
+                    switch (board[x][y]) {
+                        case 0:
+                            processAdjcent(x, y, function (p, q) {
+                                if (state[p][q] != states.flag)
+                                    uncover(p, q);
+                            });
+                            uncoveredTiles++;
+                            break;
+                        case -1:
+                            trippedMines++;
+                            if (canLose)
+                                changeGameState("Lost");
+                            break;
+                        default:
+                            uncoveredTiles++;
+                            break;
+                    }
+                    break;
+                case states.uncovered:
+                    var adjMines = 0;
+                    processAdjcent(x, y, function (p, q) {
+                        if (state[p][q] == states.flag || (board[p][q] == -1 && state[p][q] == states.uncovered))
+                            adjMines++;
+                    });
+                    if (adjMines == board[x][y])
+                        processAdjcent(x, y, function (p, q) {
+                            if (state[p][q] == states.covered)
+                                uncover(p, q);
+                        });
+                    break;
+                case states.flag:
+                    state[x][y] = states.covered;
+                    break;
+            }
+        }
+
+        function flag(x, y) {
+            switch (state[x][y]) {
+                case states.covered:
+                    state[x][y] = states.flag;
+                    break;
+                case states.flag:
+                    state[x][y] = states.covered;
+                    break;
+            }
+        }
+
+        function processAdjcent(x, y, operation) {
+            if (state[x - 1] != undefined) {
+                operation(x - 1, y - 1);
+                operation(x - 1, y);
+                operation(x - 1, y + 1);
+            }
+            if (state[x][y + 1] != undefined)
+                operation(x, y + 1);
+            if (state[x + 1] != undefined) {
+                operation(x + 1, y + 1);
+                operation(x + 1, y);
+                operation(x + 1, y - 1);
+            }
+            if (state[x][y - 1] != undefined)
+                operation(x, y - 1);
+        }
+
+        function revealBoard() {
+            if (gameState == "Initialized")
+                return;
+            foreachTile(function (x, y) {
+                switch (state[x][y]) {
+                    case states.covered:
+                        if (board[x][y] != -1)
+                            uncoveredTiles++;
+                        state[x][y] = states.uncovered;
+                        break;
+                    case states.flag:
+                        if (board[x][y] == -1) {
+                            state[x][y] = states.right;
+                            rightFlags++;
+                        }
+                        else {
+                            state[x][y] = states.wrong;
+                            wrongFlags++;
+                            uncoveredTiles++;
+                        }
+                        break;
+                }
+            });
+        }
+    </script>
+</head>
+<body>
+    <div id="menu">
+        <h1>Minesweeper</h1>
+        <div>
+            New Game:
+            <button onclick="initializeBoard(9, 9, 10);">Easy</button>
+            <button onclick="initializeBoard(16, 16, 40);">Medium</button>
+            <button onclick="initializeBoard(30, 16, 99);">Expert</button>
+        </div>
+        <div>
+            <button onclick="changeGameState('Ended');">Reveal Board</button>
+            <button onclick="canLose = !canLose; message.innerHTML = 'Now you can lose: ' + canLose;">Switch Can Lose</button>
+            <button onclick="useHint = true;">Use Hint</button>
+        </div>
+        <output id="message"></output>
+        <output id="time"></output>
+        <output id="hints"></output>
+    </div>
+    <table id="boardUI" oncontextmenu="event.preventDefault();"></table>
+</body>
+</html>
